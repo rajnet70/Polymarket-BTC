@@ -1,1 +1,596 @@
+<!DOCTYPE html>
 
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>Polymarket Cheat Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#07070f;font-family:'IBM Plex Mono',monospace;}
+  input{background:#0a0a14;border:1px solid #1a1a2e;border-radius:8px;padding:10px 12px;color:#f9fafb;font-family:'IBM Plex Mono',monospace;font-size:14px;outline:none;width:100%;}
+  input:focus{border-color:#374151;}
+  input::placeholder{color:#374151;}
+  button{cursor:pointer;font-family:'IBM Plex Mono',monospace;transition:all 0.15s;}
+  button:active{transform:scale(0.97);opacity:0.8;}
+  @keyframes flash{0%,100%{opacity:1}50%{opacity:0.15}}
+  @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+  @keyframes btcPulse{0%,100%{box-shadow:0 0 0 0 rgba(249,250,251,0.15)}50%{box-shadow:0 0 0 5px rgba(249,250,251,0)}}
+  @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+  @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ─── STORAGE — localStorage (permanent) ──────────────────────────────────────
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// ─── SOUNDS ──────────────────────────────────────────────────────────────────
+function beep(freq=440, dur=0.15, vol=0.3) {
+try {
+const ctx = new (window.AudioContext||window.webkitAudioContext)();
+const o=ctx.createOscillator(), g=ctx.createGain();
+o.connect(g); g.connect(ctx.destination);
+o.frequency.value=freq;
+g.gain.setValueAtTime(vol,ctx.currentTime);
+g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+dur);
+o.start(); o.stop(ctx.currentTime+dur);
+} catch {}
+}
+function alertSound(type) {
+if (type===“touch”) { beep(880,0.1); setTimeout(()=>beep(1100,0.2),120); setTimeout(()=>beep(1320,0.25),260); }
+if (type===“near”)  { beep(660,0.2,0.2); }
+if (type===“leave”) { beep(440,0.1); setTimeout(()=>beep(330,0.15),100); }
+}
+
+const ZONE = 20;
+
+// ─── PREDICTIVE MODEL ────────────────────────────────────────────────────────
+function predictPTB(btcVal, ptbVal) {
+if (!btcVal || !ptbVal) return null;
+const diff    = btcVal - ptbVal;
+const absDiff = Math.abs(diff);
+const direction = diff >= 0 ? “above” : “below”;
+const k = 0.012;
+const confidence = 1 / (1 + Math.exp(-k * absDiff));
+const scaled = 0.5 + (confidence - 0.5) * 0.75;
+const upProb   = direction === “above” ? Math.round(scaled * 100) : Math.round((1 - scaled) * 100);
+const downProb = 100 - upProb;
+const strength = absDiff < 30 ? “Tight” : absDiff < 80 ? “Moderate” : absDiff < 200 ? “Strong” : “Very Strong”;
+return { upProb, downProb, diff, absDiff, direction, strength };
+}
+
+function PredictiveModel({ btcVal, ptbVal }) {
+const [polyOdds, setPolyOdds] = useState(””);
+const r = predictPTB(btcVal, ptbVal);
+if (!r) return null;
+const betSide  = r.direction === “above” ? “UP” : “DOWN”;
+const betProb  = r.direction === “above” ? r.upProb : r.downProb;
+const betCol   = r.direction === “above” ? “#00ff87” : “#ef4444”;
+const fairOdds = 100 - betProb;
+const poly     = parseFloat(polyOdds) || null;
+const edge     = poly ? betProb - poly : null;
+const hasEdge  = edge && edge > 5;
+const edgeCol  = hasEdge ? “#00ff87” : edge > 0 ? “#fbbf24” : “#ef4444”;
+return (
+<div style={{background:”#0f0f1a”,border:“1px solid #1a1a2e”,borderRadius:12,padding:“14px 16px”}}>
+<div style={{fontSize:8,color:”#9ca3af”,letterSpacing:2,marginBottom:14}}>PREDICTIVE MODEL</div>
+<div style={{display:“flex”,justifyContent:“space-between”,alignItems:“center”,marginBottom:14,padding:“10px 14px”,background:”#07070f”,borderRadius:8,border:“1px solid #1a1a2e”}}>
+<div>
+<div style={{fontSize:8,color:”#9ca3af”,marginBottom:3}}>BTC vs PTB</div>
+<div style={{fontSize:13,fontWeight:900,color:betCol,fontFamily:”‘IBM Plex Mono’,monospace”}}>
+{r.direction===“above”?“▲”:“▼”} ${r.absDiff.toFixed(0)} {r.direction===“above”?“ABOVE”:“BELOW”}
+</div>
+</div>
+<div style={{textAlign:“right”}}>
+<div style={{fontSize:8,color:”#9ca3af”,marginBottom:3}}>SIGNAL</div>
+<div style={{fontSize:11,fontWeight:700,color:betCol}}>{r.strength} → {betSide}</div>
+</div>
+</div>
+<div style={{display:“grid”,gridTemplateColumns:“1fr 1fr”,gap:8,marginBottom:14}}>
+<div style={{background:`${betCol}08`,border:`1px solid ${betCol}40`,borderRadius:10,padding:“16px 10px”,textAlign:“center”,position:“relative”,overflow:“hidden”}}>
+<div style={{position:“absolute”,inset:0,background:`linear-gradient(135deg,transparent,${betCol}05)`,pointerEvents:“none”}}/>
+<div style={{fontSize:8,color:betCol,letterSpacing:1,marginBottom:6}}>CLOSE {betSide}</div>
+<div style={{fontSize:40,fontWeight:900,color:betCol,fontFamily:”‘Syne’,sans-serif”,lineHeight:1}}>{betProb}%</div>
+<div style={{fontSize:9,fontWeight:700,color:betCol,marginTop:4}}>→ BET {betSide}</div>
+</div>
+<div style={{background:“rgba(55,65,81,0.15)”,border:“1px solid #1a1a2e”,borderRadius:10,padding:“16px 10px”,textAlign:“center”}}>
+<div style={{fontSize:8,color:”#9ca3af”,letterSpacing:1,marginBottom:6}}>CLOSE {betSide===“UP”?“DOWN”:“UP”}</div>
+<div style={{fontSize:40,fontWeight:900,color:”#374151”,fontFamily:”‘Syne’,sans-serif”,lineHeight:1}}>{100-betProb}%</div>
+<div style={{fontSize:8,color:”#374151”,marginTop:4}}>less likely</div>
+</div>
+</div>
+<div style={{marginBottom:14}}>
+<div style={{height:8,background:”#0a0a14”,borderRadius:4,overflow:“hidden”,border:“1px solid #1a1a2e”}}>
+<div style={{width:`${betProb}%`,height:“100%”,background:`linear-gradient(90deg,${betCol}60,${betCol})`,borderRadius:4,transition:“width 0.5s”,marginLeft:r.direction===“below”?`${100-betProb}%`:“0”}}/>
+</div>
+<div style={{display:“flex”,justifyContent:“space-between”,fontSize:8,color:”#9ca3af”,marginTop:4}}>
+<span style={{color:”#00ff87”}}>▲ UP {r.upProb}%</span>
+<span style={{color:”#ef4444”}}>{r.downProb}% DOWN ▼</span>
+</div>
+</div>
+<div style={{padding:“8px 12px”,background:”#07070f”,borderRadius:7,border:“1px solid #1a1a2e”,marginBottom:10,display:“flex”,justifyContent:“space-between”,alignItems:“center”}}>
+<span style={{fontSize:9,color:”#9ca3af”}}>Fair Polymarket odds for {betSide}</span>
+<span style={{fontSize:13,fontWeight:900,color:”#fbbf24”,fontFamily:”‘IBM Plex Mono’,monospace”}}>{fairOdds}¢</span>
+</div>
+<div>
+<div style={{fontSize:8,color:”#9ca3af”,marginBottom:6}}>WHAT IS POLY OFFERING FOR {betSide}? (¢)</div>
+<input type=“number” placeholder={`e.g. ${fairOdds+8} — anything above ${fairOdds}¢ is edge`}
+value={polyOdds} onChange={e=>setPolyOdds(e.target.value)}
+style={{fontSize:14,fontWeight:700,color:betCol,padding:“10px 12px”,marginBottom:8}}/>
+{poly ? (
+<div style={{padding:“10px 14px”,background:`${edgeCol}08`,border:`1px solid ${edgeCol}30`,borderRadius:8,display:“flex”,justifyContent:“space-between”,alignItems:“center”}}>
+<div>
+<div style={{fontSize:9,color:”#9ca3af”}}>Model: {betProb}% · Poly: {poly}¢</div>
+<div style={{fontSize:8,color:”#9ca3af”,marginTop:2}}>Fair value is {fairOdds}¢ for {betSide}</div>
+</div>
+<div style={{textAlign:“right”}}>
+<div style={{fontSize:16,fontWeight:900,color:edgeCol}}>{edge>0?”+”:””}{edge}%</div>
+<div style={{fontSize:9,color:edgeCol,fontWeight:700}}>{hasEdge?“✅ BET IT”:edge>0?“⚡ MARGINAL”:“❌ SKIP”}</div>
+</div>
+</div>
+) : (
+<div style={{fontSize:8,color:”#374151”,textAlign:“center”,padding:“4px 0”}}>Type Polymarket odds → instant edge check</div>
+)}
+</div>
+</div>
+);
+}
+
+// ─── CHEAT GUIDE ─────────────────────────────────────────────────────────────
+function CheatGuide({ lvl }) {
+const scenarios = lvl.type===“support” ? [
+{ dir:“📉 STILL FALLING”, color:”#ef4444”, bg:“rgba(239,68,68,0.05)”, desc:“Momentum down, no bounce yet”, action:“🔴 BUY DOWN”, sub:“ride through support” },
+{ dir:“📈 BOUNCING”,      color:”#00ff87”, bg:“rgba(0,255,135,0.04)”, desc:“Wick rejection, candle flipping green”, action:“🟢 BUY UP”, sub:“support is holding” },
+] : [
+{ dir:“📈 STILL RISING”,  color:”#00ff87”, bg:“rgba(0,255,135,0.04)”, desc:“Momentum up, no rejection yet”, action:“🟢 BUY UP”, sub:“ride through resistance” },
+{ dir:“📉 REJECTING”,     color:”#ef4444”, bg:“rgba(239,68,68,0.05)”, desc:“Wick rejection, candle flipping red”, action:“🔴 BUY DOWN”, sub:“resistance holding” },
+];
+return (
+<div style={{borderRadius:8,overflow:“hidden”,border:“1px solid #1a1a2e”,marginTop:10}}>
+<div style={{fontSize:8,color:”#fbbf24”,letterSpacing:2,padding:“7px 10px”,background:”#07070f”,borderBottom:“1px solid #1a1a2e”}}>
+🎯 CHEAT GUIDE — READ THE CANDLE
+</div>
+<div style={{display:“grid”,gridTemplateColumns:“1fr 1fr”}}>
+{scenarios.map((s,i)=>(
+<div key={i} style={{padding:“12px 10px”,background:s.bg,borderRight:i===0?“1px solid #1a1a2e”:“none”}}>
+<div style={{fontSize:9,color:s.color,fontWeight:700,marginBottom:4}}>{s.dir}</div>
+<div style={{fontSize:8,color:”#9ca3af”,lineHeight:1.6,marginBottom:8}}>{s.desc}</div>
+<div style={{background:`${s.color}15`,border:`1px solid ${s.color}50`,borderRadius:7,padding:“8px”,textAlign:“center”}}>
+<div style={{fontSize:13,fontWeight:900,color:s.color}}>{s.action}</div>
+<div style={{fontSize:7,color:”#9ca3af”,marginTop:2}}>{s.sub}</div>
+</div>
+</div>
+))}
+</div>
+<div style={{padding:“8px 12px”,background:”#07070f”,borderTop:“1px solid #1a1a2e”,display:“flex”,gap:6,alignItems:“center”}}>
+<span style={{fontSize:9,color:”#fbbf24”}}>⚡</span>
+<span style={{fontSize:8,color:”#9ca3af”}}>Wait for <span style={{color:”#fbbf24”,fontWeight:700}}>mispriced odds</span> before pulling trigger</span>
+</div>
+</div>
+);
+}
+
+// ─── GOLDEN RULE ─────────────────────────────────────────────────────────────
+function GoldenRule() {
+const [visible, setVisible] = useState(true);
+if (!visible) return (
+<button onClick={()=>setVisible(true)} style={{width:“100%”,padding:“8px”,background:“rgba(251,191,36,0.05)”,border:“1px solid #fbbf2420”,borderRadius:10,color:”#fbbf24”,fontSize:9,cursor:“pointer”}}>
+⚡ Show golden rule
+</button>
+);
+return (
+<div style={{position:“relative”,padding:“14px 16px”,background:“linear-gradient(135deg,rgba(251,191,36,0.08),rgba(247,147,26,0.04))”,border:“1px solid #fbbf2430”,borderRadius:12}}>
+<div style={{display:“flex”,alignItems:“center”,justifyContent:“space-between”}}>
+<div style={{display:“flex”,alignItems:“center”,gap:12}}>
+<div style={{fontSize:26,animation:“pulse 2s ease infinite”}}>⚡</div>
+<div>
+<div style={{fontSize:7,color:”#fbbf24”,letterSpacing:3,marginBottom:4}}>THE GOLDEN RULE</div>
+<div style={{fontSize:20,fontWeight:900,color:”#fbbf24”,fontFamily:”‘Syne’,sans-serif”,lineHeight:1}}>BET UNDER 1 MIN</div>
+<div style={{fontSize:9,color:”#d97706”,marginTop:5}}>Mispriced odds · Clear candle · Level confirmed</div>
+</div>
+</div>
+<div style={{textAlign:“center”,padding:“10px 14px”,background:“rgba(251,191,36,0.1)”,borderRadius:10,border:“1px solid #fbbf2430”}}>
+<div style={{fontSize:26,fontWeight:900,color:”#fbbf24”,fontFamily:“monospace”,lineHeight:1}}>60</div>
+<div style={{fontSize:8,color:”#d97706”,marginTop:2}}>SECS MAX</div>
+</div>
+</div>
+<button onClick={()=>setVisible(false)} style={{position:“absolute”,top:8,right:10,background:“transparent”,border:“none”,color:”#6b7280”,fontSize:16,cursor:“pointer”,padding:“2px 6px”}}>×</button>
+</div>
+);
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+function App() {
+const [levels,     setLevels]    = useState(()=>load(“sr_levels”,[]));
+const [btc,        setBtc]       = useState(()=>load(“sr_btc”,””));
+const [ptb,        setPtb]       = useState(()=>load(“sr_ptb”,””));
+const [newPrice,   setNewPrice]  = useState(””);
+const [newType,    setNewType]   = useState(“support”);
+const [newLabel,   setNewLabel]  = useState(””);
+const [alerts,     setAlerts]    = useState([]);
+const [flashing,   setFlashing]  = useState(null);
+const [confirmedBtc, setConfirmedBtc] = useState(parseFloat(load(“sr_btc”,””))||null);
+const [record,     setRecord]    = useState(()=>load(“sr_record”,{wins:0,losses:0,history:[]}));
+const [lastResult, setLastResult]= useState(null);
+const prevBtc = useRef(parseFloat(load(“sr_btc”,””))||null);
+
+// Save to localStorage on every change
+useEffect(()=>save(“sr_levels”,levels),[levels]);
+useEffect(()=>save(“sr_btc”,btc),[btc]);
+useEffect(()=>save(“sr_ptb”,ptb),[ptb]);
+useEffect(()=>save(“sr_record”,record),[record]);
+
+// Alert engine — only fires on confirmed BTC (Enter or blur)
+useEffect(()=>{
+if(!confirmedBtc||!levels.length) return;
+const prev=prevBtc.current, now=confirmedBtc;
+levels.forEach(lvl=>{
+const d=Math.abs(now-lvl.price);
+const wasNear=prev?Math.abs(prev-lvl.price)<=ZONE:false;
+const isNear=d<=ZONE;
+if(prev){
+const crossed=(prev<lvl.price&&now>=lvl.price)||(prev>lvl.price&&now<=lvl.price);
+if(crossed){ alertSound(“touch”); setFlashing(lvl.id); setTimeout(()=>setFlashing(null),2000); pushAlert(“touch”,lvl,now); return; }
+}
+if(isNear&&!wasNear){ alertSound(“near”); pushAlert(“near”,lvl,now); return; }
+if(!isNear&&wasNear&&prev){ alertSound(“leave”); pushAlert(“leave”,lvl,now); }
+});
+prevBtc.current=now;
+},[confirmedBtc]);
+
+const pushAlert=(type,lvl,price)=>{
+const msgs={
+touch:`🚨 ${lvl.type==="resistance"?"RESISTANCE":"SUPPORT"} TOUCHED $${lvl.price.toLocaleString()} — CHECK CANDLE`,
+near:`⚡ APPROACHING $${lvl.price.toLocaleString()} — $${Math.abs(price-lvl.price).toFixed(0)} away`,
+leave:`↗ LEFT $${lvl.price.toLocaleString()} zone`,
+};
+const colors={touch:”#f7931a”,near:”#fbbf24”,leave:”#6b7280”};
+setAlerts(a=>[{id:Date.now(),type,msg:msgs[type],color:colors[type],time:new Date().toLocaleTimeString()},…a.slice(0,9)]);
+};
+
+const logResult=(result)=>{
+const entry={result,time:new Date().toLocaleTimeString(),btc:btcVal,ptb:ptbVal};
+setRecord(r=>({wins:result===“win”?r.wins+1:r.wins,losses:result===“loss”?r.losses+1:r.losses,history:[entry,…r.history.slice(0,19)]}));
+setLastResult(result);
+setTimeout(()=>setLastResult(null),1200);
+if(result===“win”){ beep(880,0.1); setTimeout(()=>beep(1100,0.15),120); setTimeout(()=>beep(1320,0.2),240); }
+if(result===“loss”){ beep(220,0.3,0.2); }
+};
+
+const addLevel=()=>{
+const p=parseFloat(newPrice); if(!p) return;
+setLevels(ls=>[…ls,{id:Date.now(),price:p,type:newType,label:newLabel||(newType===“resistance”?“Resistance”:“Support”)}].sort((a,b)=>b.price-a.price));
+setNewPrice(””); setNewLabel(””);
+};
+
+const btcVal=parseFloat(btc)||null;
+const ptbVal=parseFloat(ptb)||null;
+const sorted=([…levels]).sort((a,b)=>b.price-a.price);
+const aboveBtc=btcVal?sorted.filter(l=>l.price>btcVal):[];
+const belowBtc=btcVal?sorted.filter(l=>l.price<=btcVal):sorted;
+const nearAbove=aboveBtc[aboveBtc.length-1]||null;
+const nearBelow=belowBtc[0]||null;
+const distAbove=nearAbove&&btcVal?nearAbove.price-btcVal:null;
+const distBelow=nearBelow&&btcVal?btcVal-nearBelow.price:null;
+
+return (
+<div style={{minHeight:“100vh”,background:”#07070f”,display:“flex”,justifyContent:“center”,padding:“12px 12px 60px”}}>
+<div style={{width:“100%”,maxWidth:420,display:“flex”,flexDirection:“column”,gap:10}}>
+
+```
+    {/* HEADER */}
+    <div style={{padding:"16px",background:"linear-gradient(135deg,#0f0f1a,#0a0a12)",border:"1px solid #1a1a2e",borderRadius:14,display:"flex",alignItems:"center",gap:12}}>
+      <div style={{width:44,height:44,borderRadius:12,background:"linear-gradient(135deg,#f7931a,#c97210)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,boxShadow:"0 4px 20px rgba(247,147,26,0.35)",flexShrink:0}}>📍</div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:16,fontWeight:800,color:"#f9fafb",fontFamily:"'Syne',sans-serif"}}>Polymarket Cheat Guide</div>
+        <div style={{fontSize:9,color:"#9ca3af",marginTop:2}}>Levels saved permanently · Your edge, always ready</div>
+      </div>
+      {btcVal&&<div style={{textAlign:"right"}}>
+        <div style={{fontSize:15,fontWeight:900,color:"#f9fafb",fontFamily:"'IBM Plex Mono',monospace"}}>${btcVal.toLocaleString()}</div>
+      </div>}
+    </div>
+
+    {/* GOLDEN RULE */}
+    <GoldenRule/>
+
+    {/* PRICES */}
+    <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2,marginBottom:12}}>ENTER PRICES</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div>
+          <div style={{fontSize:9,color:"#9ca3af",marginBottom:6}}>BTC PRICE</div>
+          <input type="number" placeholder="e.g. 71250" value={btc} onChange={e=>setBtc(e.target.value)}
+            onBlur={()=>setConfirmedBtc(parseFloat(btc)||null)}
+            onKeyDown={e=>{if(e.key==="Enter"){setConfirmedBtc(parseFloat(btc)||null);e.target.blur();}}}
+            style={{fontSize:17,fontWeight:700,color:"#f9fafb",padding:"12px"}}/>
+        </div>
+        <div>
+          <div style={{fontSize:9,color:"#9ca3af",marginBottom:6}}>PRICE TO BEAT</div>
+          <input type="number" placeholder="e.g. 71000" value={ptb} onChange={e=>setPtb(e.target.value)}
+            style={{fontSize:17,fontWeight:700,color:"#fbbf24",padding:"12px"}}/>
+        </div>
+      </div>
+      {btcVal&&ptbVal&&(
+        <div style={{padding:"10px 12px",background:btcVal>ptbVal?"rgba(0,255,135,0.07)":"rgba(239,68,68,0.07)",borderRadius:8,border:`1px solid ${btcVal>ptbVal?"#00ff8730":"#ef444430"}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:9,color:"#9ca3af"}}>BTC vs PTB</span>
+          <span style={{fontSize:13,fontWeight:900,color:btcVal>ptbVal?"#00ff87":"#ef4444"}}>
+            {btcVal>ptbVal?"▲ ABOVE":"▼ BELOW"} by ${Math.abs(btcVal-ptbVal).toFixed(0)}
+            <span style={{fontSize:9,color:"#9ca3af",marginLeft:8}}>→ lean {btcVal>ptbVal?"UP":"DOWN"}</span>
+          </span>
+        </div>
+      )}
+    </div>
+
+    {/* PREDICTIVE MODEL */}
+    <PredictiveModel btcVal={btcVal} ptbVal={ptbVal}/>
+
+    {/* DISTANCE TO LEVELS */}
+    {btcVal&&(nearAbove||nearBelow)&&(
+      <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+        <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2,marginBottom:14}}>DISTANCE TO LEVELS</div>
+        {nearAbove&&(
+          <div style={{marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:"#ef4444"}}/>
+                <span style={{fontSize:10,fontWeight:700,color:"#f9fafb"}}>{nearAbove.label}</span>
+                <span style={{fontSize:10,color:"#9ca3af"}}>${nearAbove.price.toLocaleString()}</span>
+              </div>
+              <span style={{fontSize:16,fontWeight:900,color:"#ef4444",fontFamily:"'IBM Plex Mono',monospace"}}>↑ ${distAbove.toFixed(0)}</span>
+            </div>
+            <div style={{height:6,background:"#0a0a14",borderRadius:3,overflow:"hidden",border:"1px solid #1a1a2e"}}>
+              <div style={{width:`${Math.min(100,Math.max(3,(1-distAbove/300)*100))}%`,height:"100%",background:"linear-gradient(90deg,#ef444440,#ef4444)",borderRadius:3,transition:"width 0.5s",marginLeft:"auto"}}/>
+            </div>
+            <div style={{fontSize:8,color:"#9ca3af",marginTop:4,textAlign:"right"}}>
+              {distAbove<=20?"🔥 AT RESISTANCE":distAbove<=50?"⚠️ Very close":distAbove<=100?"Getting close":"Room to move"}
+            </div>
+          </div>
+        )}
+        <div style={{display:"flex",alignItems:"center",gap:8,margin:"12px 0"}}>
+          <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+          <div style={{fontSize:11,fontWeight:900,color:"#f9fafb",fontFamily:"'IBM Plex Mono',monospace",padding:"5px 12px",background:"#1a1a2e",borderRadius:7,border:"1px solid #374151",animation:"btcPulse 2s ease infinite",whiteSpace:"nowrap"}}>
+            ₿ ${btcVal.toLocaleString()}
+            {ptbVal&&<span style={{color:"#fbbf24",marginLeft:8,fontSize:9}}>PTB ${ptbVal.toLocaleString()}</span>}
+          </div>
+          <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+        </div>
+        {nearBelow&&(
+          <div style={{marginTop:10}}>
+            <div style={{height:6,background:"#0a0a14",borderRadius:3,overflow:"hidden",border:"1px solid #1a1a2e",marginBottom:6}}>
+              <div style={{width:`${Math.min(100,Math.max(3,(1-distBelow/300)*100))}%`,height:"100%",background:"linear-gradient(90deg,#00ff87,#00ff8740)",borderRadius:3,transition:"width 0.5s"}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:16,fontWeight:900,color:"#00ff87",fontFamily:"'IBM Plex Mono',monospace"}}>↓ ${distBelow.toFixed(0)}</span>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:10,color:"#9ca3af"}}>${nearBelow.price.toLocaleString()}</span>
+                <span style={{fontSize:10,fontWeight:700,color:"#f9fafb"}}>{nearBelow.label}</span>
+                <div style={{width:8,height:8,borderRadius:"50%",background:"#00ff87"}}/>
+              </div>
+            </div>
+            <div style={{fontSize:8,color:"#9ca3af",marginTop:4}}>
+              {distBelow<=20?"🔥 AT SUPPORT":distBelow<=50?"⚠️ Very close":distBelow<=100?"Getting close":"Room to move"}
+            </div>
+          </div>
+        )}
+        {nearAbove&&nearBelow&&(()=>{
+          const total=nearAbove.price-nearBelow.price;
+          const pct=Math.min(100,Math.max(0,((btcVal-nearBelow.price)/total)*100));
+          const col=pct>=80?"#ef4444":pct<=20?"#00ff87":"#fbbf24";
+          return (
+            <div style={{marginTop:14,padding:"12px",background:"#07070f",borderRadius:8,border:"1px solid #1a1a2e"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#9ca3af",marginBottom:8}}>
+                <span style={{color:"#00ff87"}}>🟢 {nearBelow.label}</span>
+                <span style={{color:col,fontWeight:700}}>{pct<=20?"AT SUPPORT":pct>=80?"AT RESISTANCE":pct<=40?"Lower half":pct>=60?"Upper half":"Mid range"}</span>
+                <span style={{color:"#ef4444"}}>🔴 {nearAbove.label}</span>
+              </div>
+              <div style={{position:"relative",height:12,background:"#0a0a14",borderRadius:6,border:"1px solid #1a1a2e"}}>
+                <div style={{position:"absolute",left:0,top:0,width:"15%",height:"100%",background:"rgba(0,255,135,0.1)",borderRadius:"6px 0 0 6px"}}/>
+                <div style={{position:"absolute",right:0,top:0,width:"15%",height:"100%",background:"rgba(239,68,68,0.1)",borderRadius:"0 6px 6px 0"}}/>
+                {ptbVal&&ptbVal>=nearBelow.price&&ptbVal<=nearAbove.price&&(
+                  <div style={{position:"absolute",top:-4,bottom:-4,width:2,background:"#fbbf24",left:`${((ptbVal-nearBelow.price)/total)*100}%`,transform:"translateX(-50%)",borderRadius:1,zIndex:1}}>
+                    <div style={{position:"absolute",top:-12,left:"50%",transform:"translateX(-50%)",fontSize:6,color:"#fbbf24",whiteSpace:"nowrap",fontWeight:700}}>PTB</div>
+                  </div>
+                )}
+                <div style={{position:"absolute",top:"50%",transform:"translate(-50%,-50%)",width:18,height:18,borderRadius:"50%",background:col,border:"2px solid #07070f",left:`${pct}%`,boxShadow:`0 0 10px ${col}`,transition:"left 0.5s ease",zIndex:2}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:7,color:"#374151",marginTop:5}}>
+                <span>${nearBelow.price.toLocaleString()}</span>
+                <span style={{color:"#9ca3af"}}>range ${total.toFixed(0)}</span>
+                <span>${nearAbove.price.toLocaleString()}</span>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    )}
+
+    {/* ALL LEVELS MAP */}
+    {sorted.length>0&&(
+      <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+        <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2,marginBottom:14}}>ALL LEVELS</div>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          {sorted.map((lvl,i)=>{
+            const col=lvl.type==="resistance"?"#ef4444":"#00ff87";
+            const dist=btcVal?Math.abs(btcVal-lvl.price):null;
+            const isTouching=dist!==null&&dist<=ZONE;
+            const isFlash=flashing===lvl.id;
+            const isAbove=btcVal?lvl.price>btcVal:true;
+            const nextLvl=sorted[i+1];
+            const showBtcHere=btcVal&&nextLvl&&btcVal<lvl.price&&btcVal>=nextLvl.price;
+            const showBtcBottom=btcVal&&i===sorted.length-1&&btcVal<lvl.price;
+            return (
+              <div key={lvl.id}>
+                <div style={{padding:"10px 12px",borderRadius:9,border:`1px solid ${isFlash?"#f7931a50":isTouching?col+"40":"#1a1a2e"}`,background:isFlash?"rgba(247,147,26,0.07)":isTouching?`${col}06`:"#07070f",animation:isFlash?"flash 0.3s ease 5":"none",transition:"all 0.3s"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0,boxShadow:isTouching?`0 0 8px ${col}`:""}}/>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:14,fontWeight:900,color:isFlash?"#f7931a":col,fontFamily:"'IBM Plex Mono',monospace"}}>${lvl.price.toLocaleString()}</span>
+                        <span style={{fontSize:9,color:"#9ca3af"}}>{lvl.label}</span>
+                        {isTouching&&<span style={{fontSize:9,fontWeight:700,color:"#f7931a",animation:"pulse 0.6s ease infinite"}}>🔥 AT LEVEL</span>}
+                      </div>
+                      {dist!==null&&!isTouching&&<div style={{fontSize:8,color:"#9ca3af",marginTop:2}}>{isAbove?"↓":"↑"} ${dist.toFixed(0)} away</div>}
+                    </div>
+                    {ptbVal&&Math.abs(ptbVal-lvl.price)<60&&<div style={{fontSize:7,padding:"3px 7px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",borderRadius:5,border:"1px solid #fbbf2425",flexShrink:0}}>PTB≈</div>}
+                    <button onClick={()=>setLevels(ls=>ls.filter(l=>l.id!==lvl.id))} style={{background:"transparent",border:"none",color:"#374151",fontSize:16,padding:"0 4px",lineHeight:1}}>×</button>
+                  </div>
+                  {isTouching&&<CheatGuide lvl={lvl}/>}
+                </div>
+                {(showBtcHere||showBtcBottom)&&(
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 8px",margin:"2px 0"}}>
+                    <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+                    <div style={{fontSize:9,fontWeight:900,color:"#f9fafb",fontFamily:"'IBM Plex Mono',monospace",padding:"4px 10px",background:"#1a1a2e",borderRadius:6,border:"1px solid #374151",animation:"btcPulse 2s ease infinite",whiteSpace:"nowrap"}}>
+                      ₿ ${btcVal.toLocaleString()}{ptbVal&&<span style={{color:"#fbbf24",marginLeft:8}}>PTB ${ptbVal.toLocaleString()}</span>}
+                    </div>
+                    <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {btcVal&&sorted.every(l=>l.price<btcVal)&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 8px",margin:"2px 0"}}>
+              <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+              <div style={{fontSize:9,fontWeight:900,color:"#f9fafb",padding:"4px 10px",background:"#1a1a2e",borderRadius:6,border:"1px solid #374151",animation:"btcPulse 2s ease infinite"}}>
+                ₿ ${btcVal.toLocaleString()}{ptbVal&&<span style={{color:"#fbbf24",marginLeft:8}}>PTB ${ptbVal.toLocaleString()}</span>}
+              </div>
+              <div style={{flex:1,height:1,background:"#1a1a2e"}}/>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* ADD LEVEL */}
+    <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2,marginBottom:12}}>ADD LEVEL</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        {["support","resistance"].map(t=>(
+          <button key={t} onClick={()=>setNewType(t)}
+            style={{padding:"10px",background:newType===t?(t==="support"?"rgba(0,255,135,0.1)":"rgba(239,68,68,0.1)"):"#0a0a14",color:newType===t?(t==="support"?"#00ff87":"#ef4444"):"#9ca3af",border:`1px solid ${newType===t?(t==="support"?"#00ff8740":"#ef444440"):"#1a1a2e"}`,borderRadius:8,fontSize:11,fontWeight:700}}>
+            {t==="support"?"🟢 Support":"🔴 Resistance"}
+          </button>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:10}}>
+        <div>
+          <div style={{fontSize:8,color:"#9ca3af",marginBottom:6}}>PRICE</div>
+          <input type="number" placeholder="e.g. 71000" value={newPrice} onChange={e=>setNewPrice(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addLevel()}/>
+        </div>
+        <div>
+          <div style={{fontSize:8,color:"#9ca3af",marginBottom:6}}>LABEL</div>
+          <input type="text" placeholder="Strong" value={newLabel} onChange={e=>setNewLabel(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addLevel()}/>
+        </div>
+      </div>
+      <button onClick={addLevel} style={{width:"100%",padding:"13px",background:newPrice?"linear-gradient(135deg,#f7931a,#c97210)":"#0a0a14",color:newPrice?"#07070f":"#6b7280",border:"none",borderRadius:10,fontSize:13,fontWeight:900}}>
+        + ADD LEVEL
+      </button>
+    </div>
+
+    {/* ALERTS */}
+    {alerts.length>0&&(
+      <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2}}>ALERTS</div>
+          <button onClick={()=>setAlerts([])} style={{background:"transparent",border:"none",color:"#9ca3af",fontSize:9}}>CLEAR</button>
+        </div>
+        {alerts.map(a=>(
+          <div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #1a1a2e",animation:"slideIn 0.2s ease"}}>
+            <span style={{fontSize:10,fontWeight:700,color:a.color}}>{a.msg}</span>
+            <span style={{fontSize:8,color:"#9ca3af",flexShrink:0,marginLeft:8}}>{a.time}</span>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* WIN/LOSS TRACKER */}
+    <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{fontSize:8,color:"#9ca3af",letterSpacing:2,marginBottom:14}}>TRADE TRACKER</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        <button onClick={()=>logResult("win")}
+          style={{padding:"18px",background:lastResult==="win"?"rgba(0,255,135,0.25)":"rgba(0,255,135,0.07)",color:"#00ff87",border:`2px solid ${lastResult==="win"?"#00ff87":"#00ff8740"}`,borderRadius:12,fontSize:20,fontWeight:900,transition:"all 0.2s"}}>
+          🏆 WIN
+        </button>
+        <button onClick={()=>logResult("loss")}
+          style={{padding:"18px",background:lastResult==="loss"?"rgba(239,68,68,0.25)":"rgba(239,68,68,0.07)",color:"#ef4444",border:`2px solid ${lastResult==="loss"?"#ef4444":"#ef444440"}`,borderRadius:12,fontSize:20,fontWeight:900,transition:"all 0.2s"}}>
+          ❌ LOSS
+        </button>
+      </div>
+      {(record.wins+record.losses)>0&&(()=>{
+        const total=record.wins+record.losses;
+        const pct=Math.round((record.wins/total)*100);
+        const col=pct>=60?"#00ff87":pct>=50?"#fbbf24":"#ef4444";
+        return (
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+              <div style={{background:"#07070f",borderRadius:8,padding:"10px",textAlign:"center",border:"1px solid #1a1a2e"}}>
+                <div style={{fontSize:7,color:"#9ca3af",letterSpacing:1,marginBottom:4}}>WINS</div>
+                <div style={{fontSize:22,fontWeight:900,color:"#00ff87",lineHeight:1}}>{record.wins}</div>
+              </div>
+              <div style={{background:"#07070f",borderRadius:8,padding:"10px",textAlign:"center",border:`1px solid ${col}30`}}>
+                <div style={{fontSize:7,color:"#9ca3af",letterSpacing:1,marginBottom:4}}>WIN RATE</div>
+                <div style={{fontSize:22,fontWeight:900,color:col,lineHeight:1}}>{pct}%</div>
+              </div>
+              <div style={{background:"#07070f",borderRadius:8,padding:"10px",textAlign:"center",border:"1px solid #1a1a2e"}}>
+                <div style={{fontSize:7,color:"#9ca3af",letterSpacing:1,marginBottom:4}}>LOSSES</div>
+                <div style={{fontSize:22,fontWeight:900,color:"#ef4444",lineHeight:1}}>{record.losses}</div>
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={{height:8,background:"#0a0a14",borderRadius:4,overflow:"hidden",border:"1px solid #1a1a2e"}}>
+                <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${col}80,${col})`,borderRadius:4,transition:"width 0.6s ease"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:7,color:"#9ca3af",marginTop:4}}>
+                <span>{record.wins}W / {record.losses}L · {total} trades</span>
+                <span style={{color:col,fontWeight:700}}>{pct>=60?"🔥 Strong edge":pct>=50?"✅ Positive edge":"⚠️ Keep tracking"}</span>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+              {record.history.slice(0,10).map((h,i)=>(
+                <div key={i} style={{width:28,height:28,borderRadius:6,background:h.result==="win"?"rgba(0,255,135,0.15)":"rgba(239,68,68,0.15)",border:`1px solid ${h.result==="win"?"#00ff8740":"#ef444440"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>
+                  {h.result==="win"?"✓":"✗"}
+                </div>
+              ))}
+            </div>
+            <button onClick={()=>{if(window.confirm("Reset all trade history?"))setRecord({wins:0,losses:0,history:[]});}}
+              style={{width:"100%",padding:"8px",background:"transparent",color:"#374151",border:"1px solid #1a1a2e",borderRadius:8,fontSize:9}}>
+              RESET TRACKER
+            </button>
+          </>
+        );
+      })()}
+      {(record.wins+record.losses)===0&&(
+        <div style={{textAlign:"center",padding:"10px 0",fontSize:9,color:"#374151"}}>Tap WIN or LOSS after each trade to track your edge</div>
+      )}
+    </div>
+
+    {sorted.length===0&&(
+      <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:12,padding:"40px 20px",textAlign:"center"}}>
+        <div style={{fontSize:36,marginBottom:12}}>📍</div>
+        <div style={{fontSize:12,color:"#f9fafb",marginBottom:6}}>No levels marked yet</div>
+        <div style={{fontSize:9,color:"#9ca3af"}}>Add your S/R levels above — saved permanently to this browser</div>
+      </div>
+    )}
+
+  </div>
+</div>
+```
+
+);
+}
+
+ReactDOM.createRoot(document.getElementById(“root”)).render(<App/>);
+</script>
+
+</body>
+</html>
